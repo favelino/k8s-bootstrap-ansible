@@ -14,7 +14,7 @@ The goal of this project is to provide a deterministic and repeatable way to boo
 ## Architecture
 
 - 1 Control Plane node
-- 2 Worker nodes
+- N Worker nodes
 - Ubuntu OS
 - containerd as container runtime
 - Calico as CNI
