@@ -8,7 +8,6 @@ This project focuses on repeatability, infrastructure as code, and production-st
 
 The goal of this project is to provide a deterministic and repeatable way to bootstrap Kubernetes clusters from scratch.
 
-It demonstrates infrastructure automation practices used by SRE and platform engineering teams, enabling fast environment creation, reduced manual intervention, and consistent deployments across labs or production-like scenarios.
 
 ---
 
