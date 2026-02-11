@@ -1,0 +1,90 @@
+---
+- name: Part 3 - Initialize control-plane with kubeadm and generate join command
+  hosts: k8s_controller
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vault.yml
+    # Change your pod CIDR If needed, but remember to also update the part 4 (Calico) variables.
+    # The advertise address is usually the control-plane IP (or interface IP) that other nodes will use to connect to the API server. Make sure it's correct for your environment.
+    # The cri_socket should match what you used in part 2 (containerd config).
+  vars:
+    pod_network_cidr_resolved: "{{ pod_network_cidr | default('10.10.0.0/16') }}"
+    apiserver_advertise_address_resolved: "{{ apiserver_advertise_address | default(hostvars[groups['k8s_controller'][0]].ansible_host | default(groups['k8s_controller'][0])) }}"
+    kube_admin_user_resolved: "{{ kube_admin_user | default(ansible_user) }}"
+    kube_admin_group_resolved: "{{ kube_admin_group | default(kube_admin_user_resolved) }}"
+    kube_admin_home_resolved: "{{ kube_admin_home | default('/home/' ~ kube_admin_user_resolved if kube_admin_user_resolved != 'root' else '/root') }}"
+    kubeconfig_src: "/etc/kubernetes/admin.conf"
+    kubeconfig_dir: "{{ kube_admin_home_resolved }}/.kube"
+    kubeconfig_dest: "{{ kubeconfig_dir }}/config"
+    cri_socket: "unix:///run/containerd/containerd.sock"
+
+  tasks:
+    - name: Check if the cluster has already been initialized
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_src }}"
+      register: adminconf
+
+    - name: Run kubeadm init (only if not initialized yet)
+      ansible.builtin.command: >
+        kubeadm init
+        --pod-network-cidr={{ pod_network_cidr_resolved }}
+        --apiserver-advertise-address={{ apiserver_advertise_address_resolved }}
+        --cri-socket={{ cri_socket }}
+      when: not adminconf.stat.exists
+      register: kubeadm_init
+      changed_when: true
+
+    - name: Ensure .kube directory for kubectl user
+      ansible.builtin.file:
+        path: "{{ kubeconfig_dir }}"
+        state: directory
+        owner: "{{ kube_admin_user_resolved }}"
+        group: "{{ kube_admin_group_resolved }}"
+        mode: "0700"
+
+    - name: Copy admin.conf for kubectl user
+      ansible.builtin.copy:
+        src: "{{ kubeconfig_src }}"
+        dest: "{{ kubeconfig_dest }}"
+        remote_src: true
+        owner: "{{ kube_admin_user_resolved }}"
+        group: "{{ kube_admin_group_resolved }}"
+        mode: "0600"
+
+    - name: Generate join command (always)
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+    - name: PRINT JOIN COMMAND
+      ansible.builtin.debug:
+        msg: "{{ join_cmd.stdout }}"
+
+
+- name: Part 3 - Run kubeadm join on workers
+  hosts: k8s_workers
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vault.yml
+
+  vars:
+    cri_socket: "unix:///run/containerd/containerd.sock"
+    join_command: "{{ hostvars[groups['k8s_controller'][0]].join_cmd.stdout }}"
+
+  tasks:
+    - name: Check if worker is already in the cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: worker_joined
+
+    - name: Run kubeadm join (only if not joined yet)
+      ansible.builtin.command: >
+        {{ join_command }}
+        --cri-socket={{ cri_socket }}
+        --v=2
+      when: not worker_joined.stat.exists
+      changed_when: true

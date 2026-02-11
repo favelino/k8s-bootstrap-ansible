@@ -1,0 +1,87 @@
+---
+- name: Part 4 - Install Calico (CNI) and wait for cluster to become Ready
+  hosts: k8s_controller
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vault.yml
+
+  vars:
+    # Must match the pod CIDR used in kubeadm init
+    pod_network_cidr_resolved: "{{ pod_network_cidr | default('10.10.0.0/16') }}"
+
+    # Calico version pin (you can change it later). Recommended to keep pinned.
+    calico_version: "v3.27.3"
+    calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+    calico_manifest_path: "/tmp/calico.yaml"
+
+    kube_admin_user_resolved: "{{ kube_admin_user | default(ansible_user) }}"
+    kube_admin_home_resolved: "{{ kube_admin_home | default('/home/' ~ kube_admin_user_resolved if kube_admin_user_resolved != 'root' else '/root') }}"
+    kubeconfig_path: "{{ kube_admin_home_resolved }}/.kube/config"
+
+  tasks:
+    - name: Ensure kubectl user kubeconfig exists on control-plane
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+
+    - name: Fail if kubeconfig does not exist (run Part 3 first)
+      ansible.builtin.fail:
+        msg: "Could not find {{ kubeconfig_path }}. Run Part 3 (kubeadm init + copy admin.conf) first."
+      when: not kubeconfig_stat.stat.exists
+
+    - name: Download Calico manifest
+      ansible.builtin.get_url:
+        url: "{{ calico_manifest_url }}"
+        dest: "{{ calico_manifest_path }}"
+        mode: "0644"
+
+    # CIDR adjustment inside manifest (calico.yaml usually comes with 192.168.0.0/16)
+    - name: Adjust Pod CIDR in Calico manifest (if default value exists)
+      ansible.builtin.replace:
+        path: "{{ calico_manifest_path }}"
+        regexp: '192\.168\.0\.0/16'
+        replace: "{{ pod_network_cidr_resolved }}"
+
+    - name: Apply Calico to cluster (kubectl apply)
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig_path }} apply -f {{ calico_manifest_path }}
+      register: calico_apply
+      changed_when: "'configured' in calico_apply.stdout or 'created' in calico_apply.stdout"
+
+    - name: Wait for calico-node (DaemonSet) to be ready
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig_path }}
+        -n kube-system rollout status daemonset/calico-node --timeout=300s
+      register: calico_node_rollout
+      changed_when: false
+
+    - name: Wait for calico-kube-controllers (Deployment) to be ready
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig_path }}
+        -n kube-system rollout status deployment/calico-kube-controllers --timeout=300s
+      register: calico_ctrl_rollout
+      changed_when: false
+
+    - name: Show Calico pods
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig_path }}
+        -n kube-system get pods -l k8s-app=calico-node -o wide
+      register: calico_pods
+      changed_when: false
+
+    - name: Show nodes (it may take a few seconds to become Ready)
+      ansible.builtin.command: >
+        kubectl --kubeconfig={{ kubeconfig_path }} get nodes -o wide
+      register: nodes_out
+      changed_when: false
+
+    - name: Final output
+      ansible.builtin.debug:
+        msg:
+          - "Calico apply: {{ calico_apply.stdout | default('') }}"
+          - "calico-node rollout: {{ calico_node_rollout.stdout | default('') }}"
+          - "calico-kube-controllers rollout: {{ calico_ctrl_rollout.stdout | default('') }}"
+          - "{{ calico_pods.stdout_lines }}"
+          - "{{ nodes_out.stdout_lines }}"

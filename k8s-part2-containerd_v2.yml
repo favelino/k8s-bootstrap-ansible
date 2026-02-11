@@ -1,0 +1,149 @@
+---
+- name: Part 2 - Install and configure containerd (Docker repo) + enable kubelet
+  hosts: k8s_nodes
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vault.yml
+
+  vars:
+    docker_keyring_dir: /usr/share/keyrings
+    docker_keyring_path: /usr/share/keyrings/docker-archive-keyring.gpg
+    docker_gpg_url: https://download.docker.com/linux/ubuntu/gpg
+    docker_repo_list_path: /etc/apt/sources.list.d/docker.list
+
+    containerd_config_path: /etc/containerd/config.toml
+    cri_socket: "unix:///run/containerd/containerd.sock"
+
+  tasks:
+    ############################################################
+    # 1) Dependencies
+    ############################################################
+    - name: Install basic dependencies (APT/HTTPS/GPG)
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    ############################################################
+    # 2) Docker keyring
+    ############################################################
+    - name: Ensure Docker keyring directory
+      ansible.builtin.file:
+        path: "{{ docker_keyring_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download Docker GPG key
+      ansible.builtin.get_url:
+        url: "{{ docker_gpg_url }}"
+        dest: /tmp/docker.gpg
+        mode: "0644"
+
+    - name: Convert Docker key to keyring (gpg --dearmor)
+      ansible.builtin.command: >
+        gpg --dearmor -o {{ docker_keyring_path }} /tmp/docker.gpg
+      args:
+        creates: "{{ docker_keyring_path }}"
+
+    - name: Set Docker keyring permission
+      ansible.builtin.file:
+        path: "{{ docker_keyring_path }}"
+        mode: "0644"
+
+    ############################################################
+    # 3) Docker repo
+    ############################################################
+    - name: Add official Docker repository (stable)
+      ansible.builtin.copy:
+        dest: "{{ docker_repo_list_path }}"
+        mode: "0644"
+        content: |
+          deb [arch=amd64 signed-by={{ docker_keyring_path }}] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable
+
+    ############################################################
+    # 4) Install containerd
+    ############################################################
+    - name: Update apt cache (with Docker repo)
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install containerd.io
+      ansible.builtin.apt:
+        name:
+          - containerd.io
+        state: present
+
+    ############################################################
+    # 5) containerd config (SystemdCgroup=true)
+    ############################################################
+    - name: Ensure /etc/containerd directory
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+
+    - name: Generate default containerd config (always overwrites)
+      ansible.builtin.shell: |
+        set -e
+        containerd config default > {{ containerd_config_path }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart containerd
+
+    - name: Set SystemdCgroup = true (required for kubelet)
+      ansible.builtin.replace:
+        path: "{{ containerd_config_path }}"
+        regexp: 'SystemdCgroup\s*=\s*false'
+        replace: 'SystemdCgroup = true'
+      notify: Restart containerd
+
+    ############################################################
+    # 6) Enable and validate containerd
+    ############################################################
+    - name: Ensure containerd is enabled and running
+      ansible.builtin.systemd:
+        name: containerd
+        enabled: true
+        state: started
+
+    - name: Validate containerd is active
+      ansible.builtin.command: systemctl is-active containerd
+      register: containerd_active
+      changed_when: false
+      failed_when: containerd_active.stdout.strip() != "active"
+
+    ############################################################
+    # 7) Enable kubelet at boot
+    ############################################################
+    - name: Enable and start kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+    - name: Show kubelet status (informational)
+      ansible.builtin.command: systemctl is-active kubelet
+      register: kubelet_active
+      changed_when: false
+      failed_when: kubelet_active.stdout.strip() not in ["active", "activating"]
+
+    - name: Debug status
+      ansible.builtin.debug:
+        msg:
+          - "containerd status: {{ containerd_active.stdout.strip() }}"
+          - "kubelet status: {{ kubelet_active.stdout.strip() }}"
+          - "expected cri socket: {{ cri_socket }}"
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted

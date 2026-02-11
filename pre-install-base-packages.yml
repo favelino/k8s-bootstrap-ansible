@@ -1,0 +1,25 @@
+---
+- name: Install Vim and Basic Packages
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: update APT cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install essential packages
+      ansible.builtin.apt:
+        name:
+          - vim
+          - curl
+          - wget
+          - git
+          - htop
+          - net-tools
+          - ca-certificates
+          - unzip
+          - zip
+        state: present
