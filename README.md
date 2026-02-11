@@ -165,19 +165,10 @@ kubectl get nodes
 
 You should see all workers in `Ready` state.
 
----
-
-## Design Principles
-
-- Idempotent execution
-- Clear separation of responsibilities
-- Minimal manual steps
-- Reproducible environments
-- Automation-first mindset
 
 ---
 
-## Future Improvements
+## Potential Future Improvements
 
 - HA control plane
 - External etcd
