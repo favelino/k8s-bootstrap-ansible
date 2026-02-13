@@ -1,5 +1,5 @@
 ---
-- name: Install Vim and Basic Packages
+- name: Install Basic recommended packages to install K8s
   hosts: all
   become: true
   gather_facts: true
