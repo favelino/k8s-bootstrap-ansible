@@ -1,7 +1,7 @@
 ---
 # Cluster network settings
 pod_network_cidr: "10.10.0.0/16"
-#The same IP of the control-plane node (or its interface) that other nodes will use to connect to the API server. Make sure it's correct for your environment.
+# The same IP of the control-plane node (or its interface) that other nodes will use to connect to the API server. Make sure it's correct for your environment.
 apiserver_advertise_address: "10.100.75.16"
 
 # kubectl admin user settings (control-plane) - Replace "user" with your actual username if you want to use a non-root user for kubectl access on the control-plane node. Make sure this user exists and has appropriate permissions.
