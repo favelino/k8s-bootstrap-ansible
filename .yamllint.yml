@@ -8,3 +8,4 @@ rules:
     allow-non-breakable-inline-mappings: true
   truthy:
     allowed-values: ["true", "false", "on"]
+    
